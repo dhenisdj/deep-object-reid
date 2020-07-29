@@ -210,10 +210,10 @@ class OSNetFPN(OSNet):
             self.fpn = None
             self.fc = self._construct_fc_layer(feature_dim, channels[3], dropout_cfg)
 
-        if rsc_conf is not None and rsc_conf.enable:
-            self.rsc = RSC(**rsc_conf)
-        else:
-            self.rsc = None
+        #if rsc_conf is not None and rsc_conf.enable:
+        #    self.rsc = RSC(**rsc_conf)
+        #else:
+        #    self.rsc = None
         if self.loss not in ['am_softmax', ]:
             self.classifier = nn.Linear(self.feature_dim, num_classes)
         else:
@@ -316,16 +316,19 @@ class OSNetFPN(OSNet):
             output = feature_pyramid[-1]
         return output
 
-    def forward(self, x, return_featuremaps=False, get_embeddings=False, rsc_collect=False):
+    def forward(self, x, return_featuremaps=False, get_embeddings=False, rsc_collect=False, rsc_mask=None):
         x, feature_pyramid = self.featuremaps(x)
         if self.fpn is not None:
             feature_pyramid = self.fpn(feature_pyramid)
             x = self.process_feature_pyramid(feature_pyramid)
 
-        if self.rsc is not None:
-            x = self.rsc(x, collect=rsc_collect)
+        # if self.rsc is not None:
+        #     x = self.rsc(x, collect=rsc_collect)
         if return_featuremaps:
             return x
+
+        if rsc_mask is not None:
+            x = x * rsc_mask
 
         v = self.global_avgpool(x)
         if isinstance(self.fc[0], nn.Linear):
@@ -349,6 +352,8 @@ class OSNetFPN(OSNet):
             return y, v
 
         if self.loss in ['softmax', 'adacos', 'd_softmax', 'am_softmax']:
+            if rsc_collect:
+                return x, y
             return y
         elif self.loss in ['triplet', ]:
             return y, v

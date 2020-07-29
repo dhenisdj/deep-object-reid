@@ -30,6 +30,7 @@ import numpy as np
 from torchreid.engine import Engine
 from torchreid.losses import get_regularizer, AMSoftmaxLoss, CrossEntropyLoss, MetricLosses
 from torchreid import metrics
+from ...models.osnet_fpn import RSC
 
 class ImageAMSoftmaxEngine(Engine):
     r"""AM-Softmax-loss engine for image-reid.
@@ -44,6 +45,7 @@ class ImageAMSoftmaxEngine(Engine):
         super(ImageAMSoftmaxEngine, self).__init__(datamanager, use_gpu)
 
         self.rsc_conf = rsc_conf
+        self.rsc = RSC(**rsc_conf)
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -156,8 +158,9 @@ class ImageAMSoftmaxEngine(Engine):
         run_kwargs = self._prepare_run_kwargs()
 
         if self.rsc_conf is not None and self.rsc_conf.enable:
-            model_output = self.model(imgs, rsc_collect=True, **run_kwargs)
-            all_logits, all_embeddings, extra_data = self._parse_model_output(model_output)
+            fm, all_logits = self.model(imgs, rsc_collect=True, **run_kwargs)
+
+            self.rsc(fm, collect=True)
             for trg_id in range(self.num_targets):
                 trg_mask = train_records['dataset_id'] == trg_id
 
@@ -166,14 +169,14 @@ class ImageAMSoftmaxEngine(Engine):
                 if trg_num_samples == 0:
                     continue
 
-                trg_logits = all_logits[trg_id][trg_mask]
+                trg_logits = [all_logits][trg_id][trg_mask]
                 main_loss = self.main_losses[trg_id](trg_logits, trg_obj_ids, iteration=n_iter)
                 main_loss.backward()
-                self.model.module.rsc.generate_mask()
+                self.rsc.generate_mask()
 
             self.optimizer.zero_grad()
 
-        model_output = self.model(imgs, **run_kwargs)
+        model_output = self.model(imgs, rsc_mask=self.rsc.mask, **run_kwargs)
         all_logits, all_embeddings, extra_data = self._parse_model_output(model_output)
         total_loss = torch.zeros([], dtype=imgs.dtype, device=imgs.device)
         loss_summary = dict()

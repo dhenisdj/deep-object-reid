@@ -49,7 +49,6 @@ class RSC(nn.Module):
     def __init__(self, drop_percentage=3, channelwise=True, **kwargs):
         super(RSC, self).__init__()
         self.percentile = drop_percentage
-        self.register_buffer('collect_mode', torch.ByteTensor(1))
         self.fm = None
         self.channelwise = channelwise
         self.mask = None
@@ -68,11 +67,11 @@ class RSC(nn.Module):
             thresholds = tmp[:, num_pixels].view(-1, 1, 1)
             self.mask = torch.unsqueeze(self.mask < thresholds, 1).type_as(self.fm)
 
-    def forward(self, x):
+    def forward(self, x, collect=False):
         if not self.training:
             return x
 
-        if self.collect_mode[0] != 0:
+        if collect:
             out = x
             out.retain_grad()
             self.fm = out
@@ -317,14 +316,14 @@ class OSNetFPN(OSNet):
             output = feature_pyramid[-1]
         return output
 
-    def forward(self, x, return_featuremaps=False, get_embeddings=False):
+    def forward(self, x, return_featuremaps=False, get_embeddings=False, rsc_collect=False):
         x, feature_pyramid = self.featuremaps(x)
         if self.fpn is not None:
             feature_pyramid = self.fpn(feature_pyramid)
             x = self.process_feature_pyramid(feature_pyramid)
 
         if self.rsc is not None:
-            x = self.rsc(x)
+            x = self.rsc(x, collect=rsc_collect)
         if return_featuremaps:
             return x
 

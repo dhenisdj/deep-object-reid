@@ -156,8 +156,7 @@ class ImageAMSoftmaxEngine(Engine):
         run_kwargs = self._prepare_run_kwargs()
 
         if self.rsc_conf is not None and self.rsc_conf.enable:
-            self.model.module.rsc.collect_mode[0] = 1
-            model_output = self.model(imgs, **run_kwargs)
+            model_output = self.model(imgs, rsc_collect=True, **run_kwargs)
             all_logits, all_embeddings, extra_data = self._parse_model_output(model_output)
             for trg_id in range(self.num_targets):
                 trg_mask = train_records['dataset_id'] == trg_id
@@ -172,7 +171,6 @@ class ImageAMSoftmaxEngine(Engine):
                 main_loss.backward()
                 self.model.module.rsc.generate_mask()
 
-            self.model.module.rsc.collect_mode[0] = 0
             self.optimizer.zero_grad()
 
         model_output = self.model(imgs, **run_kwargs)

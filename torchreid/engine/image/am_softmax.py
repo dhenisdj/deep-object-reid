@@ -39,9 +39,11 @@ class ImageAMSoftmaxEngine(Engine):
                  scheduler=None, use_gpu=False, softmax_type='stock', label_smooth=False,
                  conf_penalty=False, pr_product=False, m=0.35, s=10, end_s=None,
                  duration_s=None, skip_steps_s=None, enable_masks=False,
-                 adaptive_margins=False, attr_cfg=None, base_num_classes=-1):
+                 adaptive_margins=False, attr_cfg=None, base_num_classes=-1,
+                 rsc_conf=None):
         super(ImageAMSoftmaxEngine, self).__init__(datamanager, use_gpu)
 
+        self.rsc_conf = rsc_conf
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -151,11 +153,30 @@ class ImageAMSoftmaxEngine(Engine):
         imgs = train_records['img']
         obj_ids = train_records['obj_id']
         imgs, obj_ids = self._apply_batch_transform(imgs, obj_ids)
-
         run_kwargs = self._prepare_run_kwargs()
+
+        if self.rsc_conf is not None and self.rsc_conf.enable:
+            self.model.module.rsc.collect_mode[0] = 1
+            model_output = self.model(imgs, **run_kwargs)
+            all_logits, all_embeddings, extra_data = self._parse_model_output(model_output)
+            for trg_id in range(self.num_targets):
+                trg_mask = train_records['dataset_id'] == trg_id
+
+                trg_obj_ids = obj_ids[trg_mask]
+                trg_num_samples = trg_obj_ids.numel()
+                if trg_num_samples == 0:
+                    continue
+
+                trg_logits = all_logits[trg_id][trg_mask]
+                main_loss = self.main_losses[trg_id](trg_logits, trg_obj_ids, iteration=n_iter)
+                main_loss.backward()
+                self.model.module.rsc.generate_mask()
+
+            self.model.module.rsc.collect_mode[0] = 0
+            self.optimizer.zero_grad()
+
         model_output = self.model(imgs, **run_kwargs)
         all_logits, all_embeddings, extra_data = self._parse_model_output(model_output)
-
         total_loss = torch.zeros([], dtype=imgs.dtype, device=imgs.device)
         loss_summary = dict()
 

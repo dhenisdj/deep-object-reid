@@ -45,6 +45,44 @@ pretrained_urls_fpn = {
 }
 
 
+class RSC(nn.Module):
+    def __init__(self, drop_percentage=3, channelwise=True, **kwargs):
+        super(RSC, self).__init__()
+        self.percentile = drop_percentage
+        self.register_buffer('collect_mode', torch.ByteTensor(1))
+        self.fm = None
+        self.channelwise = channelwise
+        self.mask = None
+
+    def generate_mask(self):
+        if self.channelwise:
+            self.mask = F.adaptive_avg_pool2d(self.fm.grad.abs_(), 1).squeeze()
+            tmp, _ = torch.sort(self.mask.view(self.mask.size(0), -1), 1, descending=True)
+            num_channels = int(tmp.shape[1] / 100. * self.percentile)
+            thresholds = tmp[:, num_channels].view(-1, 1)
+            self.mask = (self.mask < thresholds).type_as(self.fm).view(self.mask.size(0), -1, 1, 1)
+        else:
+            self.mask = torch.sum(self.fm.grad.abs_(), 1) / self.fm.grad.shape[1]
+            tmp, _ = torch.sort(self.mask.view(self.mask.size(0), -1), 1, descending=True)
+            num_pixels = int(tmp.shape[1] / 100. * self.percentile)
+            thresholds = tmp[:, num_pixels].view(-1, 1, 1)
+            self.mask = torch.unsqueeze(self.mask < thresholds, 1).type_as(self.fm)
+
+    def forward(self, x):
+        if not self.training:
+            return x
+
+        if self.collect_mode[0] != 0:
+            out = x
+            out.retain_grad()
+            self.fm = out
+            return out
+        else:
+            if self.mask is not None:
+                return x * self.mask
+            return x
+
+
 class LCTGate(nn.Module):
     def __init__(self, channels, groups=16):
         super(LCTGate, self).__init__()
@@ -139,6 +177,7 @@ class OSNetFPN(OSNet):
                  IN_first=False,
                  extra_blocks=False,
                  lct_gate=False,
+                 rsc_conf=None,
                  **kwargs):
         self.dropout_cfg = dropout_cfg
         self.extra_blocks = extra_blocks
@@ -172,6 +211,10 @@ class OSNetFPN(OSNet):
             self.fpn = None
             self.fc = self._construct_fc_layer(feature_dim, channels[3], dropout_cfg)
 
+        if rsc_conf is not None and rsc_conf.enable:
+            self.rsc = RSC(**rsc_conf)
+        else:
+            self.rsc = None
         if self.loss not in ['am_softmax', ]:
             self.classifier = nn.Linear(self.feature_dim, num_classes)
         else:
@@ -280,6 +323,8 @@ class OSNetFPN(OSNet):
             feature_pyramid = self.fpn(feature_pyramid)
             x = self.process_feature_pyramid(feature_pyramid)
 
+        if self.rsc is not None:
+            x = self.rsc(x)
         if return_featuremaps:
             return x
 

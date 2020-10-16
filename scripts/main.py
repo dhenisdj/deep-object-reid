@@ -12,7 +12,7 @@ from torchreid.utils import (
     resume_from_checkpoint, load_pretrained_weights, compute_model_complexity
 )
 
-from scripts.default_config import (
+from default_config import (
     imagedata_kwargs, optimizer_kwargs, videodata_kwargs, engine_run_kwargs,
     get_default_config, lr_scheduler_kwargs, model_kwargs
 )
